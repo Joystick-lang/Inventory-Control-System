@@ -1,0 +1,366 @@
+<!DOCTYPE html>
+<html lang="en-GB"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Inventory Control – Hypermarket Branch</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--tx:#1b1f24;--mut:#667085;--bd:#e3e6eb;--ac:#0b5fff;--red:#d92d20;--redbg:#fde8e6;--grn:#12805c;--grnbg:#e3f4ec;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media(prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#14171c;--card:#1d2128;--tx:#e8eaee;--mut:#98a2b3;--bd:#2e343d;--ac:#6b9bff;--red:#ff7a70;--redbg:#3a1f1d;--grn:#4fd1a0;--grnbg:#16322a;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#14171c;--card:#1d2128;--tx:#e8eaee;--mut:#98a2b3;--bd:#2e343d;--ac:#6b9bff;--red:#ff7a70;--redbg:#3a1f1d;--grn:#4fd1a0;--grnbg:#16322a;color-scheme:dark}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--tx);font:14px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+main{max-width:1280px;margin:0 auto;padding:16px}
+h1{font-size:20px;margin:0}h2{font-size:15px;margin:0 0 8px}.sub{color:var(--mut);margin:2px 0 12px}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:10px;padding:14px}
+.row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}.grid{display:grid;gap:12px;margin-bottom:12px}
+.cards{grid-template-columns:repeat(auto-fit,minmax(170px,1fr))}.two{grid-template-columns:repeat(auto-fit,minmax(320px,1fr))}
+.k{color:var(--mut);font-size:12px}.v{font-size:24px;font-weight:650}
+button,select,input[type=search]{font:inherit;color:var(--tx);background:var(--card);border:1px solid var(--bd);border-radius:8px;padding:7px 11px}
+button{cursor:pointer}button.p{background:var(--ac);border-color:var(--ac);color:#fff}
+.err{background:var(--redbg);color:var(--red);border:1px solid var(--red);border-radius:10px;padding:12px;margin-bottom:12px;white-space:pre-wrap}
+.wi label{display:block;font-size:12px;color:var(--mut)}.wi input[type=range]{width:100%}.wi>div{min-width:200px;flex:1}
+.chart{position:relative;height:270px}
+.tw{overflow-x:auto}table{border-collapse:collapse;width:100%;white-space:nowrap}
+th,td{padding:7px 9px;border-bottom:1px solid var(--bd);text-align:left}th{cursor:pointer;color:var(--mut);font-size:12px;user-select:none}td.n,th.n{text-align:right}
+.b{display:inline-block;padding:2px 9px;border-radius:99px;font-weight:600;font-size:12px}.o{background:var(--redbg);color:var(--red)}.g{background:var(--grnbg);color:var(--grn)}
+.cl{font-weight:700}.note{color:var(--mut);font-size:12px;margin-top:8px}
+</style></head><body><main>
+<h1>Inventory Control System</h1>
+<p class="sub">Single hypermarket branch · illustrative data · all costs in AED</p>
+<div class="row" style="margin-bottom:12px">
+ <button class="p" id="up">Upload .xlsx</button><input type="file" id="file" accept=".xlsx" hidden>
+ <button id="smp">Load sample data</button><button id="tpl">Download sample / template</button><button id="exp">Export results (.xlsx)</button>
+ <span class="k" id="fn"></span>
+</div>
+<div id="err" class="err" hidden></div>
+<div class="grid cards">
+ <div class="card"><div class="k">Total items</div><div class="v" id="c1">–</div></div>
+ <div class="card"><div class="k">Items to reorder</div><div class="v" id="c2" style="color:var(--red)">–</div></div>
+ <div class="card"><div class="k">Total inventory value</div><div class="v" id="c3">–</div></div>
+ <div class="card"><div class="k">A-class items</div><div class="v" id="c4">–</div></div>
+ <div class="card"><div class="k">Total order value (flagged items)</div><div class="v" id="c5">–</div></div>
+</div>
+<div class="card wi" style="margin-bottom:12px">
+ <h2>What-if panel <span id="wb" class="b o" hidden>active</span></h2>
+ <div class="row">
+  <div><label>Lead time change: <b id="lv">0</b> days</label><input type="range" id="wl" min="-7" max="14" step="1" value="0"></div>
+  <div><label>Demand change: <b id="dv">0</b>%</label><input type="range" id="wd" min="-50" max="100" step="5" value="0"></div>
+  <div><label>Apply to</label><select id="ws"><option>All</option></select></div>
+  <button id="wr">Reset</button>
+ </div>
+ <div class="note">Demand change also scales demand variability. Lead time never drops below 1 day. ABC classes are recalculated on the adjusted demand.</div>
+</div>
+<div class="grid two">
+ <div class="card"><h2>ABC share of annual usage value</h2><div class="chart"><canvas id="ch1"></canvas></div></div>
+ <div class="card"><h2>Current stock vs reorder point (first 25 filtered rows)</h2><div class="chart"><canvas id="ch2"></canvas></div></div>
+</div>
+<div class="card">
+ <div class="row" style="margin-bottom:10px">
+  <input type="search" id="q" placeholder="Search ID, item, category…">
+  <select id="fc"><option value="">All categories</option></select>
+  <select id="fk"><option value="">All classes</option><option>A</option><option>B</option><option>C</option></select>
+  <select id="fs"><option value="">All statuses</option><option value="o">Order now</option><option value="k">OK</option></select>
+  <span class="k" id="cnt"></span>
+ </div>
+ <div class="tw"><table><thead id="th"></thead><tbody id="tb"></tbody></table></div>
+ <div class="note">Click a column heading to sort. Order now = current stock at or below reorder point; recommended quantity = EOQ rounded up.</div>
+</div>
+</main>
+<script>
+/* =====================================================================
+   CALCULATIONS – every formula used by the system lives in this section
+   ===================================================================== */
+const Z = 1.65;          // z-score for a 95% service level (normal demand)
+const DAYS = 365;        // days per year
+const A_CUT = 0.80;      // class A: items until cumulative usage value reaches 80%
+const B_CUT = 0.95;      // class B: next 15% (80% to 95%); everything after is class C
+
+// Daily demand = annual demand / 365
+const dailyDemand = annual => annual / DAYS;
+// Holding cost per unit per year = holding % x unit cost (AED)
+const holdingPerUnit = (hp, cost) => hp * cost;
+// Annual usage value = annual demand x unit cost (AED); used for ABC ranking
+const usageValue = (annual, cost) => annual * cost;
+// EOQ = sqrt(2 x annual demand x ordering cost / holding cost per unit)
+const eoq = (annual, orderCost, hold) => Math.sqrt(2 * annual * orderCost / hold);
+// Safety stock = 1.65 x daily demand std dev x sqrt(lead time in days)
+const safetyStock = (sd, lt) => Z * sd * Math.sqrt(lt);
+// Reorder point = daily demand x lead time + safety stock
+const reorderPoint = (dd, lt, ss) => dd * lt + ss;
+// ABC class from cumulative share of usage value BEFORE adding this item
+const abcClass = cumBefore => cumBefore < A_CUT ? "A" : cumBefore < B_CUT ? "B" : "C";
+// Order flag: order now when current stock <= reorder point; quantity = EOQ rounded up
+const needsOrder = (stock, rop) => stock <= rop;
+const orderQty = (e) => Math.ceil(e);
+// Days of cover = current stock / daily demand (how many days the stock will last)
+const daysOfCover = (stock, dd) => stock / dd;
+// Order value (AED) = recommended order quantity x unit cost
+const orderValue = (qty, cost) => qty * cost;
+
+// Runs every formula above for all items, applying the what-if settings w
+function compute(items, w) {
+  const out = items.map(it => {
+    const inScope = w.scope === "All" || it.cat === w.scope;
+    const dm = inScope ? 1 + w.dem / 100 : 1;                    // what-if demand multiplier
+    const lt = inScope ? Math.max(1, it.lt + w.lt) : it.lt;      // what-if lead time
+    const annual = it.demand * dm, sd = it.sd * dm;
+    return { ...it, annual, sd, lt, usage: usageValue(annual, it.cost) };
+  });
+  const total = out.reduce((s, r) => s + r.usage, 0);
+  let cum = 0;                                                   // ABC: rank by usage value, descending
+  [...out].sort((a, b) => b.usage - a.usage).forEach(r => {
+    r.cls = abcClass(cum / total); cum += r.usage; r.cum = cum / total;
+  });
+  out.forEach(r => {
+    r.dd = dailyDemand(r.annual);
+    r.hold = holdingPerUnit(r.hp, r.cost);
+    r.eoq = eoq(r.annual, r.oc, r.hold);
+    r.ss = safetyStock(r.sd, r.lt);
+    r.rop = reorderPoint(r.dd, r.lt, r.ss);
+    r.value = r.stock * r.cost;                                  // stock value in AED
+    r.order = needsOrder(r.stock, r.rop);
+    r.qty = r.order ? orderQty(r.eoq) : 0;
+    r.cover = daysOfCover(r.stock, r.dd);
+    r.ov = orderValue(r.qty, r.cost);
+  });
+  return out;
+}
+/* ============================ END CALCULATIONS ============================ */
+
+const $ = s => document.querySelector(s);
+const REQ = ["Item ID","Item","Category","Annual demand","Unit cost (AED)","Ordering cost per order (AED)","Holding cost %","Lead time (days)","Current stock","Daily demand variability (std dev)"];
+const KEYS = ["id","name","cat","demand","cost","oc","hp","lt","stock","sd"];
+const MIN0 = {demand:0,cost:0,oc:0,hp:0,lt:0,stock:-1,sd:-1};  // value must be > this
+let base = [], rows = [], sortKey = "usage", sortDir = -1, ch1, ch2, barRows = [];
+const fmt = (n, d = 0) => n.toLocaleString("en-GB", {minimumFractionDigits:d, maximumFractionDigits:d});
+const esc = s => String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+
+/* ---------- Sample data (illustrative, generated with a fixed seed) ---------- */
+const DATA = `Basmati Rice 5kg|Groceries|42000|24
+Sunflower Oil 1.8L|Groceries|36000|14
+Sugar 2kg|Groceries|30000|8.5
+Wheat Flour 5kg|Groceries|18000|13
+Tuna Cans 185g|Groceries|48000|5.5
+Pasta 500g|Groceries|40000|3.5
+Chickpeas 400g|Groceries|26000|3
+Tea Bags 100s|Groceries|22000|11
+Fresh Milk 2L|Dairy & Eggs|90000|9.5
+Laban 1L|Dairy & Eggs|38000|5.5
+Cheddar Cheese 400g|Dairy & Eggs|20000|17
+Eggs 30s Tray|Dairy & Eggs|45000|15
+Butter 200g|Dairy & Eggs|16000|12
+Bottled Water 1.5L x6|Beverages|70000|7
+Cola 330ml x24|Beverages|28000|38
+Orange Juice 1L|Beverages|30000|8
+Arabic Coffee 250g|Beverages|12000|28
+Tomatoes 1kg|Fresh Produce|60000|4.5
+Bananas 1kg|Fresh Produce|55000|4
+Onions 2kg|Fresh Produce|40000|5
+Potatoes 2kg|Fresh Produce|38000|6
+Fresh Chicken 1kg|Meat & Poultry|50000|18
+Chicken Nuggets 1kg|Frozen|15000|26
+Frozen Peas 900g|Frozen|14000|9
+Ice Cream 1L|Frozen|24000|16
+Frozen Paratha 20s|Frozen|18000|12
+Laundry Detergent 3kg|Household|14000|42
+Dishwashing Liquid 750ml|Household|22000|9
+Toilet Tissue 24 Rolls|Household|30000|32
+Kitchen Towel 6 Rolls|Household|16000|18
+Garbage Bags 30s|Household|20000|7
+Shampoo 400ml|Personal Care|15000|19
+Toothpaste 120g|Personal Care|32000|8
+Body Soap 6 Pack|Personal Care|24000|14
+Deodorant 150ml|Personal Care|18000|15
+USB-C Phone Charger|Electronics|3500|35
+Wireless Earbuds|Electronics|2200|55
+LED Bulb 9W x4|Electronics|9000|22
+AA Batteries x8|Electronics|12000|24
+Power Bank 10000mAh|Electronics|1500|89
+Red Lentils 1kg|Groceries|19000|7.5
+Tomato Paste 400g|Groceries|34000|4
+Instant Noodles 5 Pack|Groceries|52000|6
+Cooking Ghee 1kg|Groceries|9000|38
+Honey 500g|Groceries|6500|32
+Salt 1kg|Groceries|15000|2.5
+Olive Oil 750ml|Groceries|11000|36
+Cornflakes 500g|Groceries|17000|15
+Greek Yoghurt 500g|Dairy & Eggs|26000|9
+Cream Cheese 200g|Dairy & Eggs|14000|8
+Fresh Cream 250ml|Dairy & Eggs|10000|6.5
+Mozzarella 2kg|Dairy & Eggs|7000|48
+Sparkling Water 330ml x12|Beverages|18000|20
+Mango Juice 1L|Beverages|21000|7.5
+Green Tea 25s|Beverages|13000|9
+Instant Coffee 200g|Beverages|14000|34
+Lemonade 1.5L|Beverages|16000|6
+Iced Tea 500ml x6|Beverages|12000|17
+Cucumbers 1kg|Fresh Produce|34000|3.5
+Carrots 1kg|Fresh Produce|28000|3
+Apples 1kg|Fresh Produce|32000|8
+Oranges 1kg|Fresh Produce|30000|6.5
+Lettuce Each|Fresh Produce|26000|4
+Lamb Mince 500g|Meat & Poultry|15000|32
+Beef Steak 500g|Meat & Poultry|9000|45
+Chicken Breast 1kg|Meat & Poultry|24000|26
+Turkey Slices 200g|Meat & Poultry|8000|14
+French Fries 2kg|Frozen|16000|19
+Mixed Vegetables 900g|Frozen|11000|8.5
+Frozen Fish Fillet 1kg|Frozen|8500|34
+Frozen Samosa 24s|Frozen|13000|17
+Fabric Softener 3L|Household|9500|24
+Floor Cleaner 1L|Household|12000|11
+Bleach 3.78L|Household|8000|13
+Air Freshener 300ml|Household|11000|10
+Facial Tissue 5 Box|Household|19000|16
+Aluminium Foil 30m|Household|10000|12
+Hand Wash 500ml|Personal Care|20000|9
+Conditioner 400ml|Personal Care|9000|19
+Razor 4 Pack|Personal Care|7500|26
+Sunscreen SPF50 150ml|Personal Care|5000|42
+Body Lotion 400ml|Personal Care|11000|17
+Sanitary Pads 28s|Personal Care|14000|13
+HDMI Cable 2m|Electronics|2800|28
+USB Flash Drive 64GB|Electronics|3000|32
+Bluetooth Speaker|Electronics|1200|120
+Extension Socket 4-Way|Electronics|4500|38
+USB Desk Fan|Electronics|1800|45
+Potato Chips 150g|Snacks|44000|6
+Chocolate Bar 100g|Snacks|52000|5
+Biscuits 300g|Snacks|36000|6.5
+Mixed Nuts 400g|Snacks|10000|38
+Dates 1kg|Snacks|16000|24
+Popcorn 100g|Snacks|20000|4.5
+Arabic Bread 6s|Bakery|60000|2.5
+Sliced Bread Loaf|Bakery|48000|5
+Croissant 4 Pack|Bakery|14000|11
+Baby Diapers Size 4|Baby Care|13000|58
+Baby Wipes 80s|Baby Care|18000|9
+Infant Formula 400g|Baby Care|7000|65`;
+const CATP = {"Groceries":[.20,70,7],"Dairy & Eggs":[.28,60,3],"Beverages":[.20,75,5],"Fresh Produce":[.35,55,2],"Meat & Poultry":[.30,65,3],"Frozen":[.28,95,5],"Household":[.18,80,8],"Personal Care":[.20,70,9],"Electronics":[.15,120,12],"Snacks":[.22,65,6],"Bakery":[.30,50,2],"Baby Care":[.18,80,10]};
+function sample() {
+  let s = 42; const rnd = () => { s |= 0; s = s + 0x6D2B79F5 | 0; let t = Math.imul(s ^ s >>> 15, 1 | s); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; };
+  return DATA.split("\n").map((l, i) => {
+    const [name, cat, d, u] = l.split("|"), P = CATP[cat], demand = +d, dd = demand / DAYS;
+    const lt = P[2] + Math.floor(rnd() * 3), sd = +(dd * (0.2 + rnd() * 0.3)).toFixed(1);
+    const rop = dd * lt + Z * sd * Math.sqrt(lt);
+    return {id:"SKU-" + String(i + 1).padStart(3, "0"), name, cat, demand, cost:+u, oc:Math.round(P[1] * (0.8 + rnd() * 0.5)), hp:P[0], lt, stock:Math.round(rop * (0.6 + rnd() * 1.8)), sd};
+  });
+}
+
+/* ---------- Import and validation ---------- */
+function parseSheet(ws) {
+  const raw = XLSX.utils.sheet_to_json(ws, {defval:"", raw:true});
+  if (!raw.length) return {errors:["The first sheet has no data rows. Add a header row and at least one item."]};
+  const norm = s => String(s).toLowerCase().replace(/\s+/g, " ").trim(), map = {}, found = Object.keys(raw[0]);
+  found.forEach(f => map[norm(f)] = f);
+  const missing = REQ.filter(c => !(norm(c) in map));
+  if (missing.length) return {errors:["Missing column(s): " + missing.join(", "), "Columns found: " + found.join(", "), "Rename or add the missing columns, then upload again."]};
+  const errors = [], items = [], seen = new Set();
+  raw.forEach((r, i) => {
+    const get = c => r[map[norm(c)]];
+    if (REQ.every(c => String(get(c)).trim() === "")) return;          // skip blank rows
+    const row = i + 2, it = {}, id = String(get(REQ[0])).trim();
+    KEYS.forEach((k, j) => {
+      const v = get(REQ[j]);
+      if (j < 3) { it[k] = String(v).trim(); if (!it[k]) errors.push(`Row ${row}: "${REQ[j]}" is empty.`); return; }
+      const n = typeof v === "number" ? v : (String(v).trim() === "" ? NaN : Number(String(v).replace(/,/g, "").replace(/%$/, "")));
+      if (!isFinite(n)) errors.push(`Row ${row} (${id}): "${REQ[j]}" must be a number (found "${v === "" ? "blank" : v}").`);
+      else if (n <= MIN0[k]) errors.push(`Row ${row} (${id}): "${REQ[j]}" must be ${MIN0[k] < 0 ? "0 or more" : "above 0"} (found ${n}).`);
+      it[k] = n;
+    });
+    if (id && seen.has(id)) errors.push(`Row ${row}: duplicate Item ID "${id}".`);
+    seen.add(id);
+    if (it.hp > 1) it.hp = it.hp / 100;                                 // accept 20 or 20% as well as 0.2
+    items.push(it);
+  });
+  if (!items.length && !errors.length) errors.push("No item rows found below the header.");
+  return {items, errors};
+}
+function showErr(list) {
+  const e = $("#err");
+  if (!list.length) { e.hidden = true; return; }
+  const shown = list.slice(0, 12);
+  if (list.length > 12) shown.push(`…and ${list.length - 12} more problem(s).`);
+  e.textContent = "Upload failed, nothing was changed:\n• " + shown.join("\n• "); e.hidden = false;
+}
+function setData(items, name) {
+  base = items; $("#fn").textContent = name;
+  const cats = [...new Set(items.map(i => i.cat))].sort();
+  [["#fc", "All categories"], ["#ws", "All"]].forEach(([sel, first]) => {
+    const el = $(sel), cur = el.value;
+    el.innerHTML = (sel === "#ws" ? "<option>All</option>" : `<option value="">${first}</option>`) + cats.map(c => `<option>${esc(c)}</option>`).join("");
+    if (cats.includes(cur)) el.value = cur;
+  });
+  update();
+}
+
+/* ---------- Rendering ---------- */
+const COLS = [["id","ID"],["name","Item"],["cat","Category"],["cls","Class"],["usage","Usage value (AED)",1],["dd","Daily demand",1,1],["eoq","EOQ",1],["ss","Safety stock",1],["rop","Reorder point",1,1],["stock","Stock",1],["cover","Days of cover",1,1],["lt","Lead time (d)",1],["order","Status"],["qty","Order qty",1],["ov","Order value (AED)",1]];
+function view() {
+  const q = $("#q").value.trim().toLowerCase(), c = $("#fc").value, k = $("#fk").value, s = $("#fs").value;
+  const v = rows.filter(r => (!q || (r.id + " " + r.name + " " + r.cat).toLowerCase().includes(q)) && (!c || r.cat === c) && (!k || r.cls === k) && (!s || (s === "o" ? r.order : !r.order)));
+  return v.sort((a, b) => { const x = a[sortKey], y = b[sortKey]; return (typeof x === "string" ? x.localeCompare(y) : x - y) * sortDir; });
+}
+function update() {
+  const w = {lt:+$("#wl").value, dem:+$("#wd").value, scope:$("#ws").value};
+  $("#lv").textContent = (w.lt > 0 ? "+" : "") + w.lt; $("#dv").textContent = (w.dem > 0 ? "+" : "") + w.dem;
+  $("#wb").hidden = !(w.lt || w.dem);
+  rows = compute(base, w);
+  $("#c1").textContent = rows.length; $("#c2").textContent = rows.filter(r => r.order).length;
+  $("#c3").textContent = "AED " + fmt(rows.reduce((s, r) => s + r.value, 0));
+  $("#c4").textContent = rows.filter(r => r.cls === "A").length;
+  $("#c5").textContent = "AED " + fmt(rows.reduce((s, r) => s + r.ov, 0));
+  $("#th").innerHTML = "<tr>" + COLS.map(c => `<th class="${c[2] ? "n" : ""}" data-k="${c[0]}">${c[1]}${sortKey === c[0] ? (sortDir > 0 ? " ▲" : " ▼") : ""}</th>`).join("") + "</tr>";
+  const v = view(); barRows = v.slice(0, 25);
+  $("#cnt").textContent = `${v.length} of ${rows.length} items`;
+  $("#tb").innerHTML = v.map(r => `<tr><td>${esc(r.id)}</td><td>${esc(r.name)}</td><td>${esc(r.cat)}</td><td class="cl">${r.cls}</td><td class="n">${fmt(r.usage)}</td><td class="n">${fmt(r.dd, 1)}</td><td class="n">${fmt(r.eoq)}</td><td class="n">${fmt(r.ss, 1)}</td><td class="n">${fmt(r.rop, 1)}</td><td class="n">${fmt(r.stock)}</td><td class="n">${fmt(r.cover, 1)}</td><td class="n">${r.lt}</td><td><span class="b ${r.order ? "o" : "g"}">${r.order ? "Order now" : "OK"}</span></td><td class="n">${r.order ? fmt(r.qty) : "–"}</td><td class="n">${r.order ? fmt(r.ov) : "–"}</td></tr>`).join("");
+  drawCharts();
+}
+function drawCharts() {
+  const val = {A:0, B:0, C:0}, n = {A:0, B:0, C:0};
+  rows.forEach(r => { val[r.cls] += r.usage; n[r.cls]++; });
+  const tot = val.A + val.B + val.C, lab = ["A","B","C"].map(c => `${c}: ${n[c]} items`);
+  if (!ch1) ch1 = new Chart($("#ch1"), {type:"doughnut", data:{labels:[], datasets:[{data:[], backgroundColor:["#0b5fff","#f79009","#98a2b3"]}]}, options:{maintainAspectRatio:false, plugins:{legend:{position:"bottom"}, tooltip:{callbacks:{label:c => ` ${(c.parsed / tot * 100).toFixed(1)}% · AED ${fmt(c.parsed)}`}}}}});
+  ch1.data.labels = lab; ch1.data.datasets[0].data = [val.A, val.B, val.C]; ch1.update();
+  if (!ch2) ch2 = new Chart($("#ch2"), {type:"bar", data:{labels:[], datasets:[{label:"Current stock", data:[]}, {label:"Reorder point", data:[], backgroundColor:"#98a2b3"}]}, options:{maintainAspectRatio:false, scales:{x:{ticks:{maxRotation:90, font:{size:10}}}}, plugins:{legend:{position:"bottom"}, tooltip:{callbacks:{title: i => barRows[i[0].dataIndex].name}}}}});
+  ch2.data.labels = barRows.map(r => r.id);
+  ch2.data.datasets[0].data = barRows.map(r => r.stock); ch2.data.datasets[0].backgroundColor = barRows.map(r => r.order ? "#d92d20" : "#12805c");
+  ch2.data.datasets[1].data = barRows.map(r => +r.rop.toFixed(1)); ch2.update();
+}
+
+/* ---------- Export ---------- */
+function exportXlsx() {
+  const data = rows.map(r => ({"Item ID":r.id, "Item":r.name, "Category":r.cat, "Annual demand (what-if adjusted)":Math.round(r.annual), "Unit cost (AED)":r.cost, "Ordering cost per order (AED)":r.oc, "Holding cost %":r.hp, "Lead time (days)":r.lt, "Current stock":r.stock, "Daily demand variability (std dev)":+r.sd.toFixed(2),
+    "Annual usage value (AED)":+r.usage.toFixed(2), "Cumulative usage %":+(r.cum * 100).toFixed(2), "ABC class":r.cls, "Daily demand":+r.dd.toFixed(2), "Holding cost per unit (AED)":+r.hold.toFixed(2), "EOQ":+r.eoq.toFixed(1), "Safety stock":+r.ss.toFixed(1), "Reorder point":+r.rop.toFixed(1), "Stock value (AED)":+r.value.toFixed(2), "Days of cover":+r.cover.toFixed(1), "Flag":r.order ? "Order now" : "OK", "Recommended order qty":r.qty, "Order value (AED)":+r.ov.toFixed(2)}));
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(data), "Results");
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([["Setting","Value"],["z-score",Z],["Class A cut-off",A_CUT],["Class B cut-off",B_CUT],["What-if lead time change (days)",+$("#wl").value],["What-if demand change (%)",+$("#wd").value],["What-if scope",$("#ws").value]]), "Settings");
+  XLSX.writeFile(wb, "inventory_results.xlsx");
+}
+function template() {
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(sample().map(i => Object.fromEntries(REQ.map((c, j) => [c, i[KEYS[j]]])))), "Items");
+  XLSX.writeFile(wb, "inventory_sample.xlsx");
+}
+
+/* ---------- Events ---------- */
+$("#up").onclick = () => $("#file").click();
+$("#file").onchange = e => {
+  const f = e.target.files[0]; if (!f) return;
+  const rd = new FileReader();
+  rd.onload = ev => {
+    try {
+      const wb = XLSX.read(ev.target.result, {type:"array"}), res = parseSheet(wb.Sheets[wb.SheetNames[0]]);
+      if (res.errors.length) showErr(res.errors); else { showErr([]); setData(res.items, f.name); }
+    } catch (x) { showErr(["Could not read this file. Please upload a valid .xlsx workbook."]); }
+  };
+  rd.onerror = () => showErr(["The file could not be opened."]);
+  rd.readAsArrayBuffer(f); e.target.value = "";
+};
+$("#smp").onclick = () => { showErr([]); setData(sample(), "Sample data (100 items)"); };
+$("#tpl").onclick = template; $("#exp").onclick = exportXlsx;
+$("#wr").onclick = () => { $("#wl").value = 0; $("#wd").value = 0; $("#ws").value = "All"; update(); };
+["#wl","#wd","#ws","#q","#fc","#fk","#fs"].forEach(s => $(s).addEventListener("input", update));
+$("#th").onclick = e => { const k = e.target.closest("th")?.dataset.k; if (!k) return; sortDir = sortKey === k ? -sortDir : 1; sortKey = k; update(); };
+setData(sample(), "Sample data (100 items)");
+</script></body></html>
